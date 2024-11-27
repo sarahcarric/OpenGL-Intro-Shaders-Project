@@ -8,10 +8,25 @@ struct GLshadertype
 }
 ShaderTypes [ ] =
 {
-	{ (char *)".vert", GL_VERTEX_SHADER },
-	{ (char *)".vs",   GL_VERTEX_SHADER },
-	{ (char *)".frag", GL_FRAGMENT_SHADER },
-	{ (char *)".fs",   GL_FRAGMENT_SHADER },
+	{ (char *)".vert", VERTEX_SHADER_TYPE },
+	{ (char *)".vs",   VERTEX_SHADER_TYPE },
+	{ (char *)".frag", FRAGMENT_SHADER_TYPE },
+	{ (char *)".fs",   FRAGMENT_SHADER_TYPE },
+
+#ifdef GEOMETRY
+	{ (char *)".geom", GEOMETRY_SHADER_TYPE },
+	{ (char *)".gs",   GEOMETRY_SHADER_TYPE },
+#endif
+
+#ifdef TESSELLATION
+	{ (char *)".tcs", TESS_CONTROL_SHADER_TYPE },
+	{ (char *)".tes", TESS_EVALUATION_SHADER_TYPE },
+#endif
+
+#ifdef COMPUTE
+	{ (char *)".comp", COMPUTE_SHADER_TYPE },
+	{ (char *)".cs",   COMPUTE_SHADER_TYPE },
+#endif
 };
 
 static
@@ -37,7 +52,7 @@ GetExtension( char *file )
 
 GLSLProgram::GLSLProgram( )
 {
-
+	Init( );
 }
 
 
@@ -60,18 +75,24 @@ GLSLProgram::CreateHelper( char *file0, ... )
 {
 	GLsizei n = 0;
 	GLchar *buf;
-	Valid = true;
 
+	Valid = true;
 	Vshader = Fshader = 0;
-	Program = 0;
+#ifdef GEOMETRY
+	Gshader = 0;
+#endif
+#ifdef TESSELLATION
+	TCshader = TEshader = 0;
+#endif
+#ifdef COMPUTE
+	Cshader = 0;
+#endif
+
 	AttributeLocs.clear();
 	UniformLocs.clear();
 
-	if( Program == 0 )
-	{
-		Program = glCreateProgram( );
-		CheckGlErrors( "glCreateProgram" );
-	}
+	Program = glCreateProgram( );
+	CheckGlErrors( "glCreateProgram" );
 
 	va_list args;
 	va_start( args, file0 );
@@ -80,6 +101,7 @@ GLSLProgram::CreateHelper( char *file0, ... )
 	// There is no way, using var args, to know how many arguments were passed
 	// I am depending on the caller passing in a NULL as the final argument.
 	// If they don't, bad things will happen.
+	// But, this "should" work ok because the prototype for ::Create defaults all filenames after the first one to NULL
 
 	char *file = file0;
 	int type;
@@ -120,7 +142,7 @@ GLSLProgram::CreateHelper( char *file0, ... )
 		{
 			switch( ShaderTypes[type].name )
 			{
-				case GL_VERTEX_SHADER:
+				case VERTEX_SHADER_TYPE:
 					if( ! CanDoVertexShaders )
 					{
 						fprintf( stderr, "Warning: this system cannot handle vertex shaders\n" );
@@ -133,7 +155,7 @@ GLSLProgram::CreateHelper( char *file0, ... )
 					}
 					break;
 
-				case GL_FRAGMENT_SHADER:
+				case FRAGMENT_SHADER_TYPE:
 					if( ! CanDoFragmentShaders )
 					{
 						fprintf( stderr, "Warning: this system cannot handle fragment shaders\n" );
@@ -144,6 +166,66 @@ GLSLProgram::CreateHelper( char *file0, ... )
 					{
 						shader = glCreateShader( GL_FRAGMENT_SHADER );
 					}
+					break;
+
+				case GEOMETRY_SHADER_TYPE:
+					if( ! CanDoGeometryShaders )
+					{
+						fprintf( stderr, "Warning: this system cannot handle geometry shaders\n" );
+						Valid = false;
+						SkipToNextVararg = true;
+					}
+#ifdef GEOMETRY
+					else
+					{
+						shader = glCreateShader( GL_GEOMETRY_SHADER );
+					}
+#endif
+					break;
+
+				case TESS_CONTROL_SHADER_TYPE:
+					if( ! CanDoTessellationShaders )
+					{
+						fprintf( stderr, "Warning: this system cannot handle tessellation control shaders\n" );
+						Valid = false;
+						SkipToNextVararg = true;
+					}
+#ifdef TESSELLATION
+					else
+					{
+						shader = glCreateShader( GL_TESS_CONTROL_SHADER );
+					}
+#endif
+					break;
+
+				case TESS_EVALUATION_SHADER_TYPE:
+					if( ! CanDoTessellationShaders )
+					{
+						fprintf( stderr, "Warning: this system cannot handle tessellation evaluation shaders\n" );
+						Valid = false;
+						SkipToNextVararg = true;
+					}
+#ifdef TESSELLATION
+					else
+					{
+						shader = glCreateShader( GL_TESS_EVALUATION_SHADER );
+					}
+#endif
+					break;
+
+				case COMPUTE_SHADER_TYPE:
+					if( ! CanDoComputeShaders )
+					{
+						fprintf( stderr, "Warning: this system cannot handle compute shaders\n" );
+						Valid = false;
+						SkipToNextVararg = true;
+					}
+#ifdef COMPUTE
+					else
+					{
+						shader = glCreateShader( GL_COMPUTE_SHADER );
+					}
+#endif
 					break;
 			}
 		}
@@ -312,17 +394,121 @@ GLSLProgram::EnableVertexAttribArray( const char *name )
 }
 
 
+int
+GLSLProgram::GetUniformTypeAndSize( GLchar *name, GLint *sizep, GLenum *typep )
+{
+	int numactiveuniforms;
+	glGetProgramiv( Program, GL_ACTIVE_UNIFORMS, &numactiveuniforms );
+	if( Verbose )
+		fprintf( stderr, "numactiveuniforms = %d\n", numactiveuniforms );
+
+	int bufsize;
+	glGetProgramiv( Program, GL_ACTIVE_UNIFORM_MAX_LENGTH, &bufsize );
+	char *lname = new char [bufsize+1];
+
+	for( int i = 0; i < numactiveuniforms; i++ )
+	{
+		GLint lsize;
+		GLenum ltype;
+		glGetActiveUniform( Program, i, bufsize, NULL, &lsize, &ltype, lname );
+		if( strcmp( name, lname ) == 0 )
+		{
+			if( Verbose )
+				fprintf( stderr, "Uniform Variable #%2d, '%s' is size %d and type 0x%X\n", i, lname, lsize, ltype );
+			*sizep = lsize;
+			*typep = ltype;
+			return 0;
+		}
+	}
+
+	return -1;
+}
+
+
+int
+GLSLProgram::GetAttributeTypeAndSize( GLchar *name, GLint *sizep, GLenum *typep )
+{
+	int numactiveattribs;
+	glGetProgramiv( Program, GL_ACTIVE_ATTRIBUTES, &numactiveattribs );
+	if( Verbose )
+		fprintf( stderr, "numactiveattribs = %d\n", numactiveattribs );
+
+	//glGetProgramiv( Program, GL_ACTIVE_ATTRIB_MAX_LENGTH, &bufsize );
+	GLsizei bufsize = 256;
+	char *lname = new char [bufsize+1];
+
+	for( int i = 0; i < numactiveattribs; i++ )
+	{
+		GLint lsize;
+		GLenum ltype;
+		GLsizei length;
+		glGetActiveAttrib( Program, i, bufsize, &length, &lsize, &ltype, lname );
+		if( strcmp( name, lname ) == 0 )
+		{
+			if( Verbose )
+				fprintf( stderr, "Attribute Variable #%2d, '%s' is size %d and type 0x%X\n", i, lname, lsize, ltype );
+			*sizep = lsize;
+			*typep = ltype;
+			return 0;
+		}
+	}
+
+	return -1;
+}
+
+
 void
 GLSLProgram::Init( )
 {
 	Verbose = false;
 
-	CanDoVertexShaders      = IsExtensionSupported( "GL_ARB_vertex_shader" );
-	CanDoFragmentShaders    = IsExtensionSupported( "GL_ARB_fragment_shader" );
+#ifndef __APPLE__
+	const GLubyte* extensions = glGetString(GL_EXTENSIONS);
+#else
+	const GLubyte* extensions = NULL;
+#endif
+	if( extensions != NULL )
+	{
+		//*********************************************************************************
+		// use this to print all extensions:
+		// (comment these out if you don't want to see the list)
+		//int len = strlen((char*)extensions);
+		//char* cp = (char*)extensions;
+		//char c;
+		//fprintf( stderr, "Here are all the extensions your system has:\n" );
+		//while ((c = *cp++) != '\0')
+		//{
+			//if (c == ' ')	c = '\n';
+			//fprintf(stderr, "%c", c);
+		//}
+		//fprintf( stderr, "\n" );
+		//*********************************************************************************
 
-	fprintf( stderr, "Can do: " );
-	if( CanDoVertexShaders )		fprintf( stderr, "vertex shaders, " );
-	if( CanDoFragmentShaders )		fprintf( stderr, "fragment shaders, " );
+		CanDoComputeShaders      = IsExtensionSupported( "GL_ARB_compute_shader" );
+		CanDoVertexShaders       = IsExtensionSupported( "GL_ARB_vertex_shader" )     ||  IsExtensionSupported( "GL_EXT_vertex_shader" );
+		CanDoTessellationShaders = IsExtensionSupported( "GL_ARB_tessellation_shader" );
+		CanDoGeometryShaders     = IsExtensionSupported( "GL_ARB_geometry_shader4" )  ||  IsExtensionSupported( "GL_EXT_geometry_shader4" ) || IsExtensionSupported("GL_EXT_geometry_shader");
+		CanDoFragmentShaders     = IsExtensionSupported( "GL_ARB_fragment_shader" );
+		fprintf( stderr, "This system can handle:\n" );
+	}
+	else
+	{
+		CanDoComputeShaders      = true;
+		CanDoVertexShaders       = true;
+		CanDoTessellationShaders = true;
+		CanDoGeometryShaders     = true;
+		CanDoFragmentShaders     = true;
+		fprintf( stderr, "Your system's OpenGL is not telling me what extensions you have.\n" );
+		fprintf( stderr, "So, I am going to assume that your system can handle:\n" );
+	}
+
+	if( CanDoVertexShaders )                fprintf( stderr, "\tvertex shaders \n" );
+	if( CanDoFragmentShaders )              fprintf( stderr, "\tfragment shaders \n" );
+	if( CanDoGeometryShaders )              fprintf( stderr, "\tgeometry shaders \n" );
+	if( CanDoTessellationShaders )          fprintf( stderr, "\ttessellation control shaders \n" );
+	if( CanDoTessellationShaders )          fprintf( stderr, "\ttessellation evaluation shaders \n" );
+	if( CanDoComputeShaders )               fprintf( stderr, "\tcompute shaders \n");
+
 	fprintf( stderr, "\n" );
 }
 
@@ -421,13 +607,123 @@ GLSLProgram::SetAttributeVariable( char* name, int val )
 
 
 void
+GLSLProgram::SetAttributeVariable( char* name, int val )
+{
+	int loc;
+	if( ( loc = GetAttributeLocation( name ) )  >= 0 )
+	{
+		this->Use();
+#ifdef TYPE_CHECKS
+		GLint  size;
+		GLenum type;
+		GetAttributeTypeAndSize( name, &size, &type );
+
+		switch( type )
+		{
+#ifdef NOT_SUPPORTED_BY_OPENGL
+			case GL_INT:
+				glVertexAttrib1i( loc, val );
+				break;
+#endif
+
+			case GL_FLOAT:
+				glVertexAttrib1f( loc, (float)val );
+				break;
+
+#ifndef __APPLE__
+			case GL_DOUBLE:
+				glVertexAttrib1d( loc, (double)val );
+				break;
+#endif
+
+			default:
+				fprintf( stderr, "Setting attribute variable '%s': please be more explicit with the variable type\n", name );
+		}
+#else
+#ifdef NOT_SUPPORTED_BY_OPENGL
+		glVertexAttrib1i( loc, val );
+#endif
+#endif
+	}
+};
+
+
+void
 GLSLProgram::SetAttributeVariable( char* name, float val )
 {
 	int loc;
 	if( ( loc = GetAttributeLocation( name ) )  >= 0 )
 	{
 		this->Use();
+#ifdef TYPE_CHECKS
+		GLint  size;
+		GLenum type;
+		GetAttributeTypeAndSize( name, &size, &type );
+
+		switch( type )
+		{
+#ifdef NOT_SUPPORTED_BY_OPENGL
+			case GL_INT:
+				glVertexAttrib1i( loc, (int)val );
+				break;
+#endif
+
+			case GL_FLOAT:
+				glVertexAttrib1f( loc, val );
+				break;
+
+			case GL_DOUBLE:
+				glVertexAttrib1d( loc, (double)val );
+				break;
+
+			default:
+				fprintf( stderr, "Setting attribute variable '%s': please be more explicit with the variable type\n", name );
+		}
+#else
 		glVertexAttrib1f( loc, val );
+#endif
+	}
+};
+
+
+void
+GLSLProgram::SetAttributeVariable( char* name, double val )
+{
+	int loc;
+	if( ( loc = GetAttributeLocation( name ) )  >= 0 )
+	{
+		this->Use();
+#ifdef TYPE_CHECKS
+		GLint  size;
+		GLenum type;
+		GetAttributeTypeAndSize( name, &size, &type );
+
+		switch( type )
+		{
+#ifdef NOT_SUPPORTED_BY_OPENGL
+			case GL_INT:
+				glVertexAttrib1i( loc, (int)val );
+				break;
+#endif
+
+			case GL_FLOAT:
+				glVertexAttrib1f( loc, (float)val );
+				break;
+
+#ifndef __APPLE__
+			case GL_DOUBLE:
+				glVertexAttrib1d( loc, val );
+				break;
+#endif
+
+			default:
+				fprintf( stderr, "Setting attribute variable '%s': please be more explicit with the variable type\n", name );
+		}
+#else
+#ifndef __APPLE__
+		glVertexAttrib1d( loc, val );
+#endif
+#endif
 	}
 };
 
@@ -492,8 +788,35 @@ GLSLProgram::SetUniformVariable( char* name, int val )
 	if( ( loc = GetUniformLocation( name ) )  >= 0 )
 	{
 		this->Use();
+#ifdef TYPE_CHECKS
+		GLint  size;
+		GLenum type;
+		GetUniformTypeAndSize( name, &size, &type );
+
+		switch( type )
+		{
+			case GL_INT:
+				glUniform1i( loc, val );
+				break;
+
+			case GL_FLOAT:
+				glUniform1f( loc, (float)val );
+				break;
+
+#ifndef __APPLE__
+			case GL_DOUBLE:
+				glUniform1d( loc, (double)val );
+				break;
+#endif
+
+			default:
+				fprintf( stderr, "Setting uniform variable '%s': please be more explicit with the variable type\n", name );
+		}
+#else
 		glUniform1i( loc, val );
+#endif
 	}
+
 };
 
 
@@ -504,7 +827,72 @@ GLSLProgram::SetUniformVariable( char* name, float val )
 	if( ( loc = GetUniformLocation( name ) )  >= 0 )
 	{
 		this->Use();
+#ifdef TYPE_CHECKS
+		GLint  size;
+		GLenum type;
+		GetUniformTypeAndSize( name, &size, &type );
+
+		switch( type )
+		{
+			case GL_INT:
+				glUniform1i( loc, (int)val );
+				break;
+
+			case GL_FLOAT:
+				glUniform1f( loc, val );
+				break;
+
+#ifndef __APPLE__
+			case GL_DOUBLE:
+				glUniform1d( loc, (double)val );
+				break;
+#endif
+
+			default:
+				fprintf( stderr, "Setting uniform variable '%s': please be more explicit with the variable type\n", name );
+		}
+#else
 		glUniform1f( loc, val );
+#endif
+	}
+};
+
+
+void
+GLSLProgram::SetUniformVariable( char* name, double val )
+{
+	int loc;
+	if( ( loc = GetUniformLocation( name ) )  >= 0 )
+	{
+		this->Use();
+#ifdef TYPE_CHECKS
+		GLint  size;
+		GLenum type;
+		GetUniformTypeAndSize( name, &size, &type );
+		switch( type )
+		{
+			case GL_INT:
+				glUniform1i( loc, (int)val );
+				break;
+
+			case GL_FLOAT:
+				glUniform1f( loc, (float)val );
+				break;
+
+#ifndef __APPLE__
+			case GL_DOUBLE:
+				glUniform1d( loc, val );
+				break;
+#endif
+
+			default:
+				fprintf( stderr, "Setting uniform variable '%s': please be more explicit with the variable type\n", name );
+		}
+#else
+#ifndef __APPLE__
+		glUniform1d( loc, val );
+#endif
+#endif
 	}
 };
 
@@ -516,7 +904,57 @@ GLSLProgram::SetUniformVariable( char* name, float val0, float val1, float val2 
 	if( ( loc = GetUniformLocation( name ) )  >= 0 )
 	{
 		this->Use();
+#ifdef TYPE_CHECKS
+		GLint  size;
+		GLenum type;
+		GetUniformTypeAndSize( name, &size, &type );
+		switch( size )
+		{
+			case 3:
+				glUniform3f( loc, val0, val1, val2 );
+				break;
+
+			case 4:
+				glUniform4f( loc, val0, val1, val2, 1.f );
+				break;
+
+			default:
+				fprintf( stderr, "Setting uniform variable '%s': please be more explicit with the variable type\n", name );
+		}
+#else
 		glUniform3f( loc, val0, val1, val2 );
+#endif
+	}
+};
+
+
+void
+GLSLProgram::SetUniformVariable( char* name, float val0, float val1, float val2, float val3 )
+{
+	int loc;
+	if( ( loc = GetUniformLocation( name ) )  >= 0 )
+	{
+		this->Use();
+#ifdef TYPE_CHECKS
+		GLint  size;
+		GLenum type;
+		GetUniformTypeAndSize( name, &size, &type );
+		switch( size )
+		{
+			case 3:
+				glUniform3f( loc, val0, val1, val2 );
+				break;
+
+			case 4:
+				glUniform4f( loc, val0, val1, val2, val3 );
+				break;
+
+			default:
+				fprintf( stderr, "Setting uniform variable '%s': please be more explicit with the variable type\n", name );
+		}
+#else
+		glUniform4f( loc, val0, val1, val2, val3 );
+#endif
 	}
 };
 
@@ -525,7 +963,7 @@ void
 GLSLProgram::SetUniformVariable( char* name, float vals[3] )
 {
 	int loc;
-	fprintf( stderr, "Found a 3-element array\n" );
+	//fprintf( stderr, "Found a 3-element array\n" );
 
 	if( ( loc = GetUniformLocation( name ) )  >= 0 )
 	{
@@ -533,6 +971,104 @@ GLSLProgram::SetUniformVariable( char* name, float vals[3] )
 		glUniform3fv( loc, 1, vals );
 	}
 };
+
+
+//********************************************************************************
+#ifdef GLM
+
+void
+GLSLProgram::SetUniformVariable( char *name, glm::vec3 v3 )
+{
+	int loc;
+	//fprintf( stderr, "Found a vec3\n" );
+	if( ( loc = GetUniformLocation( name ) )  >= 0 )
+	{
+		this->Use();
+#ifdef TYPE_CHECKS
+		GLint  size;
+		GLenum type;
+		GetUniformTypeAndSize( name, &size, &type );
+		switch( size )
+		{
+			case 3:
+				glUniform3f( loc, v3.x, v3.y, v3.z );
+				break;
+
+			case 4:
+				glUniform4f( loc, v3.x, v3.y, v3.z, 1.f );
+				break;
+
+			default:
+				fprintf( stderr, "Setting uniform variable '%s': please be more explicit with the variable type\n", name );
+		}
+#else
+		glUniform3f( loc, v3.x, v3.y, v3.z );
+#endif
+	}
+};
+
+void
+GLSLProgram::SetUniformVariable( char *name, glm::vec4 v4 )
+{
+	int loc;
+	//fprintf( stderr, "Found a vec4\n" );
+	if( ( loc = GetUniformLocation( name ) )  >= 0 )
+	{
+		this->Use();
+#ifdef TYPE_CHECKS
+		GLint  size;
+		GLenum type;
+		GetUniformTypeAndSize( name, &size, &type );
+		switch( size )
+		{
+			case 3:
+				glUniform3f( loc, v4.x, v4.y, v4.z );
+				break;
+
+			case 4:
+				glUniform4f( loc, v4.x, v4.y, v4.z, v4.w );
+				break;
+
+			default:
+				fprintf( stderr, "Setting uniform variable '%s': please be more explicit with the variable type\n", name );
+		}
+#else
+		glUniform4f( loc, v4.x, v4.y, v4.z, v4.w );
+#endif
+	}
+};
+
+
+void
+GLSLProgram::SetUniformVariable( char *name, glm::mat3 m3 )
+{
+	int loc;
+	// fprintf( stderr, "Found a mat3\n" );
+
+	if( ( loc = GetUniformLocation( name ) )  >= 0 )
+	{
+		this->Use();
+		glUniformMatrix3fv( loc, 1, GL_FALSE, glm::value_ptr( m3 ) );
+	}
+};
+
+
+void
+GLSLProgram::SetUniformVariable( char *name, glm::mat4 m4 )
+{
+	int loc;
+	// fprintf( stderr, "Found a mat4\n" );
+
+	if( ( loc = GetUniformLocation( name ) )  >= 0 )
+	{
+		this->Use();
+		glUniformMatrix4fv( loc, 1, GL_FALSE, glm::value_ptr( m4 ) );
+	}
+};
+
+#endif
+//********************************************************************************
+
 
 
 bool
@@ -550,6 +1086,7 @@ GLSLProgram::IsExtensionSupported( const char *extension )
 	// get the full list of extensions:
 
 	const GLubyte *extensions = glGetString( GL_EXTENSIONS );
+
 
 	for( const GLubyte *start = extensions; ; )
 	{
@@ -606,5 +1143,35 @@ CheckGlErrors( const char* caller )
 		}
 		return;
 	}
+}
+#endif
+
+
+//#define TEST
+#ifdef TEST
+//#include "glew.h"
+#include <GL/gl.h>
+#include <GL/glu.h>
+#include "glut.h"
+
+
+GLSLProgram Pattern;
+
+int
+main( )
+{
+        //GLenum err = glewInit( );
+        //if( err != GLEW_OK )
+        //{
+                //fprintf( stderr, "glewInit Error\n" );
+        //}
+        //else
+                //fprintf( stderr, "GLEW initialized OK\n" );
+        //fprintf( stderr, "Status: Using GLEW %s\n", glewGetString(GLEW_VERSION));
+
+	fprintf( stderr, "Starting\n" );
+	Pattern.Init( );
+	fprintf( stderr, "Called Init\n" );
+	return 0;
 }
 #endif
