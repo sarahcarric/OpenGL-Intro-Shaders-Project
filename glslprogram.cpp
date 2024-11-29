@@ -1,6 +1,4 @@
 #include "glslprogram.h"
-
-
 struct GLshadertype
 {
 	char *extension;

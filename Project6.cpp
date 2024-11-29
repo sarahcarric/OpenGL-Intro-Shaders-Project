@@ -12,7 +12,6 @@
 #endif
 
 
-#include "glew.h"
 #include <OpenGL/gl.h>
 #include <OpenGL/glu.h>
 #include "glut.h"
@@ -186,6 +185,11 @@ int		ShadowsOn;				// != 0 means to turn shadows on
 float	Time;					// used for animation, this has a value between 0. and 1.
 int		Xmouse, Ymouse;			// mouse values
 float	Xrot, Yrot;				// rotation angles in degrees
+GLuint SalmonDL;
+bool isKeytime=false;
+bool isTime=false;
+float nowAmp,nowFreq, nowSpeed;
+const int MSEC = 10000;	
 
 
 // function prototypes:
@@ -271,10 +275,14 @@ MulArray3(float factor, float a, float b, float c )
 //#include "osucone.cpp"
 //#include "osutorus.cpp"
 //#include "bmptotexture.cpp"
-//#include "loadobjfile.cpp"
-//#include "keytime.cpp"
-//#include "glslprogram.cpp"
+#include "loadobjfile.cpp"
+#include "keytime.cpp"
+#include "glslprogram.cpp"
 
+GLSLProgram Salmon;
+Keytimes NowAmp;
+Keytimes NowFreq;
+Keytimes NowSpeed;
 
 // main program:
 
@@ -437,10 +445,40 @@ Display( )
 
 	glEnable( GL_NORMALIZE );
 
+	Salmon.Use( ); // turns the Salmon shader program on
+	int msec = glutGet( GLUT_ELAPSED_TIME )  %  MSEC;
+	float nowTime = (float)msec  / 1000.;
+	
 
-	// draw the box object by calling up its display list:
+	if(isKeytime){
+		nowAmp=NowAmp.GetValue(nowTime);
+		nowSpeed=NowSpeed.GetValue(nowTime);
+		nowFreq=NowFreq.GetValue(nowTime);
+	}
+	else{
+		nowAmp=0.5f;	
+		nowFreq=1.0f;
+		nowSpeed=0.1f;
+	}
+	
+	// no more fixed-function – the shader Salmon now handles everything
+	// but the shader program just sits there idling until you draw something
+	float amp = nowAmp+0.5*(sin(Time));
+	float freq = nowFreq+0.5*(cos(Time));
+	float speed = nowSpeed + 0.05f * (sin(Time * 2.0f));
 
-	glCallList( BoxList );
+	Salmon.SetUniformVariable( "uTime", Time); 
+	Salmon.SetUniformVariable( "uAmp", amp ); 
+	Salmon.SetUniformVariable( "uSpeed",speed ); 
+	Salmon.SetUniformVariable( "uFreq", freq);
+	// sine wave amplitude
+	// sine wave frequency
+	// overall speed of movement
+	// 0.-1., set in Animate( )
+	// keytimed, menued, keyboarded? // keytimed, menued, keyboarded? // keytimed, menued, keyboarded?
+	glCallList(SalmonDL); 
+
+	Salmon.UnUse( );
 
 #ifdef DEMO_Z_FIGHTING
 	if( DepthFightingOn != 0 )
@@ -783,6 +821,24 @@ InitGraphics( )
 	// but, this sets us up nicely for doing animation
 
 	glutIdleFunc( Animate );
+	NowAmp.Init();
+	NowAmp.AddTimeValue(1,0.2);
+	NowAmp.AddTimeValue(3,0.5);
+	NowAmp.AddTimeValue(5,0.6);
+	NowAmp.AddTimeValue(7,0.8);
+
+	NowFreq.Init();
+	NowFreq.AddTimeValue(1,0.1);
+	NowFreq.AddTimeValue(3,0.5);
+	NowFreq.AddTimeValue(5,0.8);
+	NowFreq.AddTimeValue(7,1.0);
+
+	NowSpeed.Init();
+	NowSpeed.AddTimeValue(1, 0.08);
+	NowSpeed.AddTimeValue(3,0.06);
+	NowSpeed.AddTimeValue(5,0.04);
+	NowSpeed.AddTimeValue(7,1.0);
+
 
 	// init the glew package (a window must be open to do this):
 
@@ -798,6 +854,20 @@ InitGraphics( )
 #endif
 
 	// all other setups go here, such as GLSLProgram and KeyTime setups:
+		Salmon.Init( );
+	bool valid = Salmon.Create( "salmon.vert", "salmon.frag" ); 
+	if( ! valid ){
+		fprintf( stderr, "Yuch! The Salmon shader did not compile.\n" );
+	} 
+	else {
+		fprintf( stderr, "Woo-Hoo! The Salmon shader compiled.\n" ); 
+	}
+	Salmon.Use( );
+	Salmon.SetUniformVariable( "uKa", 0.1f ); // all 3 should add up to 1.0 
+	Salmon.SetUniformVariable( "uKd", 0.4f);
+	Salmon.SetUniformVariable( "uKs", 0.5f );
+	Salmon.SetUniformVariable( "uShininess", 13.f); // whatever you like from P3
+	Salmon.UnUse( );
 
 }
 
@@ -813,64 +883,6 @@ InitLists( )
 	if (DebugOn != 0)
 		fprintf(stderr, "Starting InitLists.\n");
 
-	float dx = BOXSIZE / 2.f;
-	float dy = BOXSIZE / 2.f;
-	float dz = BOXSIZE / 2.f;
-	glutSetWindow( MainWindow );
-
-	// create the object:
-
-	BoxList = glGenLists( 1 );
-	glNewList( BoxList, GL_COMPILE );
-
-		glBegin( GL_QUADS );
-
-			glColor3f( 1., 0., 0. );
-
-				glNormal3f( 1., 0., 0. );
-					glVertex3f(  dx, -dy,  dz );
-					glVertex3f(  dx, -dy, -dz );
-					glVertex3f(  dx,  dy, -dz );
-					glVertex3f(  dx,  dy,  dz );
-
-				glNormal3f(-1., 0., 0.);
-					glVertex3f( -dx, -dy,  dz);
-					glVertex3f( -dx,  dy,  dz );
-					glVertex3f( -dx,  dy, -dz );
-					glVertex3f( -dx, -dy, -dz );
-
-			glColor3f( 0., 1., 0. );
-
-				glNormal3f(0., 1., 0.);
-					glVertex3f( -dx,  dy,  dz );
-					glVertex3f(  dx,  dy,  dz );
-					glVertex3f(  dx,  dy, -dz );
-					glVertex3f( -dx,  dy, -dz );
-
-				glNormal3f(0., -1., 0.);
-					glVertex3f( -dx, -dy,  dz);
-					glVertex3f( -dx, -dy, -dz );
-					glVertex3f(  dx, -dy, -dz );
-					glVertex3f(  dx, -dy,  dz );
-
-			glColor3f(0., 0., 1.);
-
-				glNormal3f(0., 0., 1.);
-					glVertex3f(-dx, -dy, dz);
-					glVertex3f( dx, -dy, dz);
-					glVertex3f( dx,  dy, dz);
-					glVertex3f(-dx,  dy, dz);
-
-				glNormal3f(0., 0., -1.);
-					glVertex3f(-dx, -dy, -dz);
-					glVertex3f(-dx,  dy, -dz);
-					glVertex3f( dx,  dy, -dz);
-					glVertex3f( dx, -dy, -dz);
-
-		glEnd( );
-
-	glEndList( );
-
 
 	// create the axes:
 
@@ -879,6 +891,13 @@ InitLists( )
 		glLineWidth( AXES_WIDTH );
 			Axes( 1.5 );
 		glLineWidth( 1. );
+	glEndList( );
+
+	
+
+	SalmonDL = glGenLists( 1 ); 
+	glNewList( SalmonDL, GL_COMPILE );
+		LoadObjFile( (char *) "salmon.obj" ); 
 	glEndList( );
 }
 
