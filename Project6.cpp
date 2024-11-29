@@ -188,7 +188,9 @@ float	Xrot, Yrot;				// rotation angles in degrees
 GLuint SalmonDL;
 bool isKeytime=false;
 bool isTime=false;
+bool isAmp=false;
 float nowAmp,nowFreq, nowSpeed;
+float fastAmp;
 const int MSEC = 10000;	
 
 
@@ -280,9 +282,10 @@ MulArray3(float factor, float a, float b, float c )
 #include "glslprogram.cpp"
 
 GLSLProgram Salmon;
-Keytimes NowAmp;
+Keytimes NowAmp,FastAmp;
 Keytimes NowFreq;
 Keytimes NowSpeed;
+
 
 // main program:
 
@@ -450,20 +453,29 @@ Display( )
 	float nowTime = (float)msec  / 1000.;
 	
 
-	if(isKeytime){
-		nowAmp=NowAmp.GetValue(nowTime);
+	// if(isKeytime){
+		
 		nowSpeed=NowSpeed.GetValue(nowTime);
 		nowFreq=NowFreq.GetValue(nowTime);
-	}
-	else{
-		nowAmp=0.5f;	
-		nowFreq=1.0f;
-		nowSpeed=0.1f;
-	}
+		
+	// }
+	// else{
+	// 	nowAmp=0.5f;	
+	// 	nowFreq=1.0f;
+	// 	nowSpeed=0.1f;
+	// }
 	
 	// no more fixed-function – the shader Salmon now handles everything
 	// but the shader program just sits there idling until you draw something
-	float amp = nowAmp+0.5*(sin(Time));
+	float amp;
+	if(isAmp==false){
+		nowAmp=NowAmp.GetValue(nowTime);
+		amp = nowAmp+0.5*(sin(Time));
+	}
+	if(isAmp==true){
+		fastAmp=FastAmp.GetValue(nowTime);
+		amp=fastAmp+0.5*(sin(Time));
+	}
 	float freq = nowFreq+0.5*(cos(Time));
 	float speed = nowSpeed + 0.05f * (sin(Time * 2.0f));
 
@@ -821,11 +833,20 @@ InitGraphics( )
 	// but, this sets us up nicely for doing animation
 
 	glutIdleFunc( Animate );
+	
+
 	NowAmp.Init();
-	NowAmp.AddTimeValue(1,0.2);
-	NowAmp.AddTimeValue(3,0.5);
-	NowAmp.AddTimeValue(5,0.6);
-	NowAmp.AddTimeValue(7,0.8);
+	NowAmp.AddTimeValue(1.0,0.1);
+	NowAmp.AddTimeValue(3.0,0.5);
+	NowAmp.AddTimeValue(5.0,0.3);
+	NowAmp.AddTimeValue(7.0,0.1);
+
+	FastAmp.Init();
+	FastAmp.AddTimeValue(1.0,0.5);
+	FastAmp.AddTimeValue(3.0,0.9);
+	FastAmp.AddTimeValue(5.0,0.7);
+	FastAmp.AddTimeValue(7.0,0.5);
+	
 
 	NowFreq.Init();
 	NowFreq.AddTimeValue(1,0.1);
@@ -912,6 +933,15 @@ Keyboard( unsigned char c, int x, int y )
 
 	switch( c )
 	{
+		case 'a':
+		case 'A':
+			if(isAmp==false){
+				isAmp=true;
+			}
+			else{
+				isAmp=false;
+			}
+			break;
 		case 'o':
 		case 'O':
 			NowProjection = ORTHO;
